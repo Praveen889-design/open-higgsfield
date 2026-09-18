@@ -24,7 +24,8 @@ import {
 } from "./credentials";
 import { DEVICE_COOKIE, resolveDeviceId } from "./device";
 import { createPlatformClient } from "./platform";
-import type { StatusResult } from "./platform";
+import type { QueuedGeneration, StatusResult } from "./platform";
+import type { ActionRefusal } from "./refusal";
 import { toPlatform } from "./to-platform";
 
 /** Whether this deployment asks for a code at all — read by the unlock screen
@@ -70,6 +71,16 @@ export async function lockStudio() {
 /* The proxy turns a locked visitor away at the page, but a server action is
    reachable without ever loading one. Each action that spends something —
    the platform's quota, the visitor's key — asks again here. */
+/** The same two gates the throwing guard applies, reported rather than raised.
+    Lock first: a locked studio is not a missing key, and saying so sends the
+    visitor to the door instead of to the key modal. */
+async function refuse(): Promise<ActionRefusal | null> {
+  const jar = await cookies();
+  if (!(await isUnlocked(jar.get(UNLOCK_COOKIE)?.value))) return "locked";
+  if (!decodeCredentials(jar.get(PLATFORM_KEY_COOKIE)?.value)) return "missing-key";
+  return null;
+}
+
 async function requireUnlocked() {
   const jar = await cookies();
   if (!(await isUnlocked(jar.get(UNLOCK_COOKIE)?.value))) throw new LockedError();
@@ -97,26 +108,43 @@ export async function hasPlatformCredentials() {
   return (await readStoredCredentials()) !== null;
 }
 
-export async function submitGeneration(plane: GenerationPlane) {
-  await requireUnlocked();
+/* Outcomes, not exceptions, for the two refusals the studio has an answer to.
+   A throw reaches the browser stripped of both its class and its message, so
+   neither could be told from a platform failure — and the studio would offer
+   "try again" to someone who has no key. Anything genuinely unexpected still
+   throws and still reads as a failure. */
+export type SubmitOutcome =
+  | { ok: true; queued: QueuedGeneration }
+  | { ok: false; refusal: ActionRefusal };
+
+export async function submitGeneration(plane: GenerationPlane): Promise<SubmitOutcome> {
+  const refusal = await refuse();
+  if (refusal) return { ok: false, refusal };
+
   const model = getModel(plane.model);
   const parsed: GenerationPlane = {
     ...plane,
     settings: parseSettings(model, plane.settings),
   };
   const { path, body } = toPlatform(parsed);
-  return createPlatformClient(await readCredentials()).submit(path, body);
+  return { ok: true, queued: await createPlatformClient(await readCredentials()).submit(path, body) };
 }
 
 /** Every request in flight, answered in one round trip. Next dispatches server
     actions one at a time per client, so a poll per run would queue ahead of the
     next submit — the fan-out belongs on this side of the call, where it is
     genuinely parallel. */
-export async function getGenerationStatuses(data: unknown): Promise<StatusResult[]> {
-  await requireUnlocked();
+export type StatusOutcome =
+  | { ok: true; results: StatusResult[] }
+  | { ok: false; refusal: ActionRefusal };
+
+export async function getGenerationStatuses(data: unknown): Promise<StatusOutcome> {
+  const refusal = await refuse();
+  if (refusal) return { ok: false, refusal };
+
   const requestIds = parseRequestIds(data);
   const client = createPlatformClient(await readCredentials());
-  return Promise.all(
+  const results = await Promise.all(
     requestIds.map(async (requestId): Promise<StatusResult> => {
       try {
         return { requestId, status: await client.status(requestId) };
@@ -125,6 +153,7 @@ export async function getGenerationStatuses(data: unknown): Promise<StatusResult
       }
     }),
   );
+  return { ok: true, results };
 }
 
 async function readStoredCredentials() {

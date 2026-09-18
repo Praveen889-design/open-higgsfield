@@ -1,5 +1,6 @@
 import { getGenerationStatuses } from "./actions";
 import type { GenerationStatus, StatusResult } from "./platform";
+import { ActionRefusedError } from "./refusal";
 
 /** Statuses the platform never moves off again. */
 const TERMINAL = new Set(["completed", "failed", "nsfw", "canceled"]);
@@ -71,9 +72,12 @@ async function round(): Promise<void> {
   timer = null;
   polling = true;
   try {
-    const results = await getGenerationStatuses({ requestIds: [...waiting.keys()] });
+    const outcome = await getGenerationStatuses({ requestIds: [...waiting.keys()] });
+    /* Not a dropped round: no number of retries supplies a key or a code, and
+       the allowance for misses would only delay the studio saying so. */
+    if (!outcome.ok) return settleAll(new ActionRefusedError(outcome.refusal));
     misses = 0;
-    for (const result of results) deliver(result);
+    for (const result of outcome.results) deliver(result);
     sweep();
   } catch (caught) {
     if (++misses < MAX_MISSES) return;

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { hasPlatformCredentials, submitGeneration } from "@/generation/actions";
-import { MissingCredentialsError } from "@/generation/credentials";
+import { ActionRefusedError, refusalOf, refusalText } from "@/generation/refusal";
 import { MODELS, getModel } from "@/generation/catalog";
 import type { Surface } from "@/generation/catalog";
 import { assemblePlane } from "@/generation/plane";
@@ -149,11 +149,14 @@ function failureText(status: GenerationStatus): string {
   return "the platform reported a failure";
 }
 
+/* A refusal is read off the error's own type. It used to be sniffed out of the
+   message, which cannot work: an error crossing a server action arrives with
+   its class stripped and, in a production build, its message replaced. Both
+   tests were dead, and someone with no key was told to try again. */
 function describeError(caught: unknown): string {
+  const refusal = refusalOf(caught);
+  if (refusal) return refusalText(refusal);
   const message = caught instanceof Error ? caught.message : String(caught);
-  if (caught instanceof MissingCredentialsError || message.includes("Missing platform key")) {
-    return "Add your platform key to generate.";
-  }
   return `Generation failed — ${message}. Try again; if it repeats, check the key in the sidebar.`;
 }
 
@@ -274,7 +277,7 @@ export function OpenHiggsfieldApp({ fontClassName = "" }: { fontClassName?: stri
       } catch (caught) {
         if (!alive.current) return;
         const message = describeError(caught);
-        if (message.includes("platform key")) setKeysOpen(true);
+        if (refusalOf(caught) === "missing-key") setKeysOpen(true);
         setHistory((prev) => {
           const next = replaceRequest(prev, requestId, failedRows(requestId, expected, draft, message));
           void saveHistory(next);
@@ -379,7 +382,11 @@ export function OpenHiggsfieldApp({ fontClassName = "" }: { fontClassName?: stri
 
     const runOne = async (slot: { skeletons: string[] }) => {
       try {
-        const queued = await submitGeneration(plane);
+        const outcome = await submitGeneration(plane);
+        /* Raised here, on this side of the call, so the catch below can still
+           tell what happened. */
+        if (!outcome.ok) throw new ActionRefusedError(outcome.refusal);
+        const queued = outcome.queued;
         setHistory((prev) => {
           const next = [...runningRows(queued.requestId, slot.skeletons.length, draft), ...prev];
           void saveHistory(next);
@@ -390,7 +397,7 @@ export function OpenHiggsfieldApp({ fontClassName = "" }: { fontClassName?: stri
       } catch (caught) {
         if (!alive.current) return;
         const message = describeError(caught);
-        if (message.includes("platform key")) setKeysOpen(true);
+        if (refusalOf(caught) === "missing-key") setKeysOpen(true);
         setError((prev) => prev ?? message);
       } finally {
         if (alive.current) {
