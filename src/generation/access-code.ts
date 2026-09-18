@@ -19,13 +19,6 @@ export const UNLOCK_COOKIE_OPTIONS = {
   maxAge: 60 * 60 * 24 * 30,
 };
 
-export class LockedError extends Error {
-  constructor() {
-    super("This studio is locked. Enter the access code to continue.");
-    this.name = "LockedError";
-  }
-}
-
 /* Namespaced so the stored value is this app's unlock proof and nothing else —
    never a hash someone could carry in from another system that hashed the same
    secret. Bumping the version invalidates every cookie in the field. */

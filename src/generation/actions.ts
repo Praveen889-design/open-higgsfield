@@ -4,7 +4,6 @@ import { cookies, headers } from "next/headers";
 
 import { rateLimitKey, takeUnlockSlot } from "./access";
 import {
-  LockedError,
   UNLOCK_COOKIE,
   UNLOCK_COOKIE_OPTIONS,
   accessCodeRequired,
@@ -25,7 +24,7 @@ import {
 import { DEVICE_COOKIE, resolveDeviceId } from "./device";
 import { createPlatformClient } from "./platform";
 import type { QueuedGeneration, StatusResult } from "./platform";
-import type { ActionRefusal } from "./refusal";
+import { refusalText, type ActionRefusal } from "./refusal";
 import { toPlatform } from "./to-platform";
 
 /** Whether this deployment asks for a code at all — read by the unlock screen
@@ -81,22 +80,35 @@ async function refuse(): Promise<ActionRefusal | null> {
   return null;
 }
 
-async function requireUnlocked() {
-  const jar = await cookies();
-  if (!(await isUnlocked(jar.get(UNLOCK_COOKIE)?.value))) throw new LockedError();
-}
-
 function readAccessCode(data: unknown): string | null {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
   const code = (data as { code?: unknown }).code;
   return typeof code === "string" && code.trim() ? code.trim() : null;
 }
 
-export async function savePlatformCredentials(data: unknown) {
-  await requireUnlocked();
-  const { apiKey } = parseCredentialInput(data);
+/* "That key is malformed" is an answer to the question asked, not a fault, and
+   it has to come back as one: thrown, it reaches the modal as "An unexpected
+   response was received from the server" and the visitor is never told what
+   about their key was wrong. */
+export type SaveKeyOutcome = { ok: true } | { ok: false; error: string };
+
+export async function savePlatformCredentials(data: unknown): Promise<SaveKeyOutcome> {
+  /* The lock alone. refuse() also demands a key, and this is the action that
+     sets one — a visitor would need a key to be allowed to save their key. */
   const jar = await cookies();
+  if (!(await isUnlocked(jar.get(UNLOCK_COOKIE)?.value))) {
+    return { ok: false, error: refusalText("locked") };
+  }
+
+  let apiKey: string;
+  try {
+    apiKey = parseCredentialInput(data).apiKey;
+  } catch (caught) {
+    return { ok: false, error: caught instanceof Error ? caught.message : "Enter an API key" };
+  }
+
   jar.set(PLATFORM_KEY_COOKIE, encodeCredentials(apiKey), PLATFORM_KEY_COOKIE_OPTIONS);
+  return { ok: true };
 }
 
 export async function clearPlatformCredentials() {

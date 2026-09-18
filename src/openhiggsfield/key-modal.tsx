@@ -33,10 +33,15 @@ export function KeyModal({
     setBusy(true);
     setError(null);
     try {
-      await savePlatformCredentials({ api_key: apiKey });
+      const result = await savePlatformCredentials({ api_key: apiKey });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
       onSaved();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save the key");
+    } catch {
+      /* Only the transport reaches here — a rejected key came back as a value. */
+      setError("Could not reach the studio. Check your connection and try again.");
     } finally {
       setBusy(false);
     }
