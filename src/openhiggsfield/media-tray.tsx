@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import type { MediaItem, MediaRole, ModelEntry } from "@/generation/catalog";
 import { useImageMedia, useVideoMedia } from "@/generation/stores/media";
-import { uploadMedia } from "@/generation/upload";
+import { UploadRejectedError, uploadMedia } from "@/generation/upload";
 
 import { ROLE_ACCEPT, ROLE_LABELS, ROLE_TAGS, rolesOf } from "./data";
 import { AudioIcon, CloseIcon, VideoIcon } from "./icons";
@@ -100,9 +100,11 @@ export function useMediaTray(
       );
     } catch (caught) {
       onError(
-        caught instanceof Error
-          ? `Upload failed — ${caught.message}. Check the Blob store is configured, then retry.`
-          : "Upload failed. Retry, or drop the file and generate from the prompt alone.",
+        caught instanceof UploadRejectedError
+          ? caught.message
+          : caught instanceof Error
+            ? `Upload failed — ${caught.message}. Check the Blob store is configured, then retry.`
+            : "Upload failed. Retry, or drop the file and generate from the prompt alone.",
       );
     } finally {
       setUploading(false);

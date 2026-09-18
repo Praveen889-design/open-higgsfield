@@ -2,6 +2,14 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import {
+  TOKEN_LIFETIME_MS,
+  isSameOrigin,
+  rateLimitKey,
+  takeUploadSlot,
+  uploadLimits,
+} from "@/generation/access";
+import { UNLOCK_COOKIE, isUnlocked } from "@/generation/access-code";
 import { PLATFORM_KEY_COOKIE, decodeCredentials } from "@/generation/credentials";
 import {
   DEVICE_COOKIE,
@@ -10,20 +18,74 @@ import {
   resolveDeviceId,
 } from "@/generation/device";
 
-/* An upload is only useful to a caller who can also generate, and generating
-   already needs the visitor's own platform key. That key is the gate this
-   route was waiting for: without it, the endpoint hands a scoped write token
-   for this project's Blob store to anyone who can reach the URL. */
-const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+/* This route hands out a write token for the Blob store, so it is gated before
+   it does. Only the token branch is: `blob.upload-completed` is a webhook from
+   Vercel — no cookie, no Origin, and already authenticated by the signature
+   handleUpload checks against the store's own token. Gating it would break the
+   callback while protecting nothing. */
 
 export async function POST(request: Request): Promise<NextResponse> {
-  if (!(await hasPlatformKey())) {
-    return NextResponse.json({ error: "Add your platform key first" }, { status: 401 });
-  }
   const incoming = (await request.json()) as HandleUploadBody;
-  const device =
-    incoming.type === "blob.generate-client-token" ? await readDeviceId() : null;
-  const body = device ? withDevicePath(incoming, device.deviceId) : incoming;
+
+  if (incoming.type !== "blob.generate-client-token") {
+    return runUpload(incoming, request, null);
+  }
+
+  if (
+    !isSameOrigin(
+      request.headers.get("origin"),
+      request.headers.get("host"),
+      request.headers.get("x-forwarded-host"),
+    )
+  ) {
+    console.warn("[blob] rejected cross-origin token request");
+    return reject(403, "Upload requests must come from the studio.");
+  }
+
+  /* The studio's only notion of a visitor. Uploads exist to feed a generation,
+     and a generation without a key is refused anyway, so the key is the line. */
+  const jar = await cookies();
+
+  if (!(await isUnlocked(jar.get(UNLOCK_COOKIE)?.value))) {
+    console.warn("[blob] rejected locked token request");
+    return reject(403, "This studio is locked. Enter the access code to continue.");
+  }
+
+  if (!decodeCredentials(jar.get(PLATFORM_KEY_COOKIE)?.value)) {
+    console.warn("[blob] rejected token request with no platform key");
+    return reject(401, "Add your platform key before attaching media.");
+  }
+
+  /* Decided here rather than inside onBeforeGenerateToken, where a throw comes
+     back as an opaque 500 the studio cannot tell from a broken store. */
+  if (!uploadLimits(incoming.payload.pathname)) {
+    console.warn("[blob] rejected unsupported type", { pathname: incoming.payload.pathname });
+    return reject(415, "That file type can't be attached — use JPEG, PNG, WebP, GIF, MP4 or WAV.");
+  }
+
+  const device = resolveDeviceId(jar.get(DEVICE_COOKIE)?.value);
+
+  if (
+    !takeUploadSlot(
+      rateLimitKey(request.headers.get("x-forwarded-for"), device.deviceId, !device.minted),
+    )
+  ) {
+    console.warn("[blob] rate limited", { device: device.deviceId });
+    return withDeviceCookie(
+      reject(429, "Upload limit reached. Wait a few minutes, then try again."),
+      device,
+    );
+  }
+
+  const body = withDevicePath(incoming, device.deviceId);
+  return runUpload(body, request, device);
+}
+
+async function runUpload(
+  body: HandleUploadBody,
+  request: Request,
+  device: { deviceId: string; minted: boolean } | null,
+): Promise<NextResponse> {
   console.info("[blob] upload", summarizeBlobEvent(body));
 
   try {
@@ -34,19 +96,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       request,
       token,
       onBeforeGenerateToken: async (pathname) => {
-        console.info("[blob] token", { pathname });
+        /* The ceiling and the allow-list ride on the token itself, so the
+           browser cannot widen either after it is issued. */
+        const limits = uploadLimits(pathname);
+        /* Already refused above; re-read here because the token, not the
+           handler, is what Blob enforces at the edge. */
+        if (!limits) throw new Error("Unsupported file type");
+        console.info("[blob] token", { pathname, max: limits.maximumSizeInBytes });
         return {
-          allowedContentTypes: [
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/gif",
-            "video/mp4",
-            "audio/wav",
-            "audio/x-wav",
-          ],
-          maximumSizeInBytes: MAX_UPLOAD_BYTES,
+          ...limits,
           addRandomSuffix: true,
+          validUntil: Date.now() + TOKEN_LIFETIME_MS,
         };
       },
     });
@@ -63,16 +123,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 }
 
-/* The same cookie the generate action reads, checked the same way: a value
-   that is not a well-formed id:secret is no key at all. */
-async function hasPlatformKey() {
-  const jar = await cookies();
-  return decodeCredentials(jar.get(PLATFORM_KEY_COOKIE)?.value) !== null;
-}
-
-async function readDeviceId() {
-  const jar = await cookies();
-  return resolveDeviceId(jar.get(DEVICE_COOKIE)?.value);
+/** The shape the platform client already speaks, so the studio reads one field
+    whichever side refused. */
+function reject(status: number, detail: string): NextResponse {
+  return NextResponse.json({ detail }, { status });
 }
 
 function withDeviceCookie(

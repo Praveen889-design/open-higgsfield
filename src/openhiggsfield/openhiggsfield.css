@@ -3734,3 +3734,22 @@ a.ohf-btn-solid {
     display: none;
   }
 }
+
+/* ---------- lock ---------- */
+
+/* The panel the keys modal uses, standing on the studio ground instead of over
+   it: the same object, without a surface behind it to return to. */
+.ohf-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: 24px;
+}
+.ohf-lock-panel {
+  width: 380px;
+  max-width: 100%;
+}
+.ohf-lock-panel .ohf-keys-head {
+  padding-bottom: 0;
+}
