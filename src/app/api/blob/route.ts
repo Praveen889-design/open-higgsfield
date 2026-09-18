@@ -2,6 +2,7 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import { PLATFORM_KEY_COOKIE, decodeCredentials } from "@/generation/credentials";
 import {
   DEVICE_COOKIE,
   DEVICE_COOKIE_OPTIONS,
@@ -9,9 +10,16 @@ import {
   resolveDeviceId,
 } from "@/generation/device";
 
-// Anyone who can hit this route can upload. Gate it when auth exists.
+/* An upload is only useful to a caller who can also generate, and generating
+   already needs the visitor's own platform key. That key is the gate this
+   route was waiting for: without it, the endpoint hands a scoped write token
+   for this project's Blob store to anyone who can reach the URL. */
+const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!(await hasPlatformKey())) {
+    return NextResponse.json({ error: "Add your platform key first" }, { status: 401 });
+  }
   const incoming = (await request.json()) as HandleUploadBody;
   const device =
     incoming.type === "blob.generate-client-token" ? await readDeviceId() : null;
@@ -37,6 +45,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             "audio/wav",
             "audio/x-wav",
           ],
+          maximumSizeInBytes: MAX_UPLOAD_BYTES,
           addRandomSuffix: true,
         };
       },
@@ -52,6 +61,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (device?.minted) return withDeviceCookie(new NextResponse(null, { status: 500 }), device);
     throw error;
   }
+}
+
+/* The same cookie the generate action reads, checked the same way: a value
+   that is not a well-formed id:secret is no key at all. */
+async function hasPlatformKey() {
+  const jar = await cookies();
+  return decodeCredentials(jar.get(PLATFORM_KEY_COOKIE)?.value) !== null;
 }
 
 async function readDeviceId() {

@@ -9,6 +9,7 @@ export async function uploadMedia(file: File): Promise<{ url: string }> {
       payload: { pathname: file.name, clientPayload: null, multipart: false },
     }),
   });
+  if (res.status === 401) throw new Error("add your platform key first");
   if (!res.ok) throw new Error("Failed to retrieve the client token");
   const { clientToken, pathname } = (await res.json()) as {
     clientToken?: unknown;
