@@ -155,6 +155,9 @@ function failureText(status: GenerationStatus): string {
    tests were dead, and someone with no key was told to try again. */
 function describeError(caught: unknown): string {
   const refusal = refusalOf(caught);
+  /* The platform's own wording, not ours: it names the account state the
+     visitor has to go and change. */
+  if (refusal === "platform") return `The platform refused this run — ${(caught as Error).message}.`;
   if (refusal) return refusalText(refusal);
   const message = caught instanceof Error ? caught.message : String(caught);
   return `Generation failed — ${message}. Try again; if it repeats, check the key in the sidebar.`;
@@ -385,7 +388,7 @@ export function OpenHiggsfieldApp({ fontClassName = "" }: { fontClassName?: stri
         const outcome = await submitGeneration(plane);
         /* Raised here, on this side of the call, so the catch below can still
            tell what happened. */
-        if (!outcome.ok) throw new ActionRefusedError(outcome.refusal);
+        if (!outcome.ok) throw new ActionRefusedError(outcome.refusal, outcome.detail);
         const queued = outcome.queued;
         setHistory((prev) => {
           const next = [...runningRows(queued.requestId, slot.skeletons.length, draft), ...prev];

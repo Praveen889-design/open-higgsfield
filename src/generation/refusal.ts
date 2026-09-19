@@ -6,22 +6,26 @@
    to come back as data and be turned into an error on this side, where an
    instanceof still means something. */
 
-export type ActionRefusal = "missing-key" | "locked";
+/* "platform" is the platform's own refusal — out of credits, a rejected key,
+   a model that will not take this input. It reads differently from the other
+   two: they are answerable here, this one is answerable only over there, and
+   it arrives with words worth repeating verbatim. */
+export type ActionRefusal = "missing-key" | "locked" | "platform";
 
 export class ActionRefusedError extends Error {
   readonly refusal: ActionRefusal;
 
-  constructor(refusal: ActionRefusal) {
-    super(refusalText(refusal));
+  constructor(refusal: ActionRefusal, detail?: string) {
+    super(detail?.trim() ? detail.trim() : refusalText(refusal));
     this.name = "ActionRefusedError";
     this.refusal = refusal;
   }
 }
 
 export function refusalText(refusal: ActionRefusal): string {
-  return refusal === "locked"
-    ? "This studio is locked. Reload the page and enter the access code."
-    : "Add your platform key to generate.";
+  if (refusal === "locked") return "This studio is locked. Reload the page and enter the access code.";
+  if (refusal === "platform") return "The platform refused this run.";
+  return "Add your platform key to generate.";
 }
 
 /** The refusal behind a caught value, or null when it was a real failure. */

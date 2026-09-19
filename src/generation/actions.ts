@@ -13,7 +13,7 @@ import {
   encodeCredentials,
   parseCredentialInput,
 } from "./credentials";
-import { createPlatformClient } from "./platform";
+import { PlatformError, createPlatformClient } from "./platform";
 import type { QueuedGeneration, StatusResult } from "./platform";
 import { refusalText, type ActionRefusal } from "./refusal";
 import { toPlatform } from "./to-platform";
@@ -78,7 +78,7 @@ export async function hasPlatformCredentials() {
    throws and still reads as a failure. */
 export type SubmitOutcome =
   | { ok: true; queued: QueuedGeneration }
-  | { ok: false; refusal: ActionRefusal };
+  | { ok: false; refusal: ActionRefusal; detail?: string };
 
 export async function submitGeneration(plane: GenerationPlane): Promise<SubmitOutcome> {
   const refusal = await refuse();
@@ -90,7 +90,18 @@ export async function submitGeneration(plane: GenerationPlane): Promise<SubmitOu
     settings: parseSettings(model, plane.settings),
   };
   const { path, body } = toPlatform(parsed);
-  return { ok: true, queued: await createPlatformClient(await readCredentials()).submit(path, body) };
+  try {
+    const queued = await createPlatformClient(await readCredentials()).submit(path, body);
+    return { ok: true, queued };
+  } catch (caught) {
+    /* The platform already said what was wrong — "not_enough_credits" is the
+       whole answer. Thrown, it reaches the browser as React error #441 and the
+       visitor is told to try again, which is the one thing that cannot help. */
+    if (caught instanceof PlatformError) {
+      return { ok: false, refusal: "platform", detail: caught.message };
+    }
+    throw caught;
+  }
 }
 
 /** Every request in flight, answered in one round trip. Next dispatches server
