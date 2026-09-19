@@ -1,16 +1,8 @@
 "use server";
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 
-import { rateLimitKey, takeUnlockSlot } from "./access";
-import {
-  UNLOCK_COOKIE,
-  UNLOCK_COOKIE_OPTIONS,
-  accessCodeRequired,
-  isUnlocked,
-  matchesAccessCode,
-  unlockToken,
-} from "./access-code";
+import { UNLOCK_COOKIE, accessCodeRequired, isUnlocked } from "./access-code";
 import { getModel, parseSettings } from "./catalog";
 import type { GenerationPlane } from "./catalog/types";
 import {
@@ -21,7 +13,6 @@ import {
   encodeCredentials,
   parseCredentialInput,
 } from "./credentials";
-import { DEVICE_COOKIE, resolveDeviceId } from "./device";
 import { createPlatformClient } from "./platform";
 import type { QueuedGeneration, StatusResult } from "./platform";
 import { refusalText, type ActionRefusal } from "./refusal";
@@ -31,40 +22,6 @@ import { toPlatform } from "./to-platform";
     so it can say so rather than offering a field that governs nothing. */
 export async function isAccessCodeRequired() {
   return accessCodeRequired();
-}
-
-/** A wrong code is an ordinary outcome of asking, not a fault, so it comes back
-    as a value. It also has to: a production build redacts anything a server
-    action throws, and the visitor would be told only that something went
-    wrong — on the one screen whose whole job is to say what went wrong. */
-export type UnlockResult = { ok: true } | { ok: false; error: string };
-
-/** Exchange the code for the cookie the proxy reads.
-
-    Guessing is rationed before the comparison runs, so a wrong answer costs an
-    attempt whether or not it was close. */
-export async function unlockStudio(data: unknown): Promise<UnlockResult> {
-  if (!accessCodeRequired()) return { ok: true };
-
-  const code = readAccessCode(data);
-  if (!code) return { ok: false, error: "Enter the access code." };
-
-  const jar = await cookies();
-  const head = await headers();
-  const device = resolveDeviceId(jar.get(DEVICE_COOKIE)?.value);
-  const key = `unlock:${rateLimitKey(head.get("x-forwarded-for"), device.deviceId, !device.minted)}`;
-  if (!takeUnlockSlot(key)) {
-    return { ok: false, error: "Too many attempts. Wait a few minutes, then try again." };
-  }
-
-  if (!(await matchesAccessCode(code))) return { ok: false, error: "That access code is not right." };
-  jar.set(UNLOCK_COOKIE, await unlockToken(code), UNLOCK_COOKIE_OPTIONS);
-  return { ok: true };
-}
-
-export async function lockStudio() {
-  const jar = await cookies();
-  jar.set(UNLOCK_COOKIE, "", { ...UNLOCK_COOKIE_OPTIONS, maxAge: 0 });
 }
 
 /* The proxy turns a locked visitor away at the page, but a server action is
@@ -78,12 +35,6 @@ async function refuse(): Promise<ActionRefusal | null> {
   if (!(await isUnlocked(jar.get(UNLOCK_COOKIE)?.value))) return "locked";
   if (!decodeCredentials(jar.get(PLATFORM_KEY_COOKIE)?.value)) return "missing-key";
   return null;
-}
-
-function readAccessCode(data: unknown): string | null {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
-  const code = (data as { code?: unknown }).code;
-  return typeof code === "string" && code.trim() ? code.trim() : null;
 }
 
 /* "That key is malformed" is an answer to the question asked, not a fault, and

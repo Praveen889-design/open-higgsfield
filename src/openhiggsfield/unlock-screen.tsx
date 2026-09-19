@@ -2,8 +2,6 @@
 
 import { useState, type FormEvent } from "react";
 
-import { unlockStudio } from "@/generation/actions";
-
 /* The door, and nothing else. No model names, no counts, no gallery — a locked
    instance should not describe what is behind it. */
 export function UnlockScreen({ fontClassName = "" }: { fontClassName?: string }) {
@@ -16,9 +14,14 @@ export function UnlockScreen({ fontClassName = "" }: { fontClassName?: string })
     setBusy(true);
     setError(null);
     try {
-      const result = await unlockStudio({ code });
+      const response = await fetch("/api/unlock", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const result = (await response.json()) as { ok?: boolean; error?: string };
       if (!result.ok) {
-        setError(result.error);
+        setError(result.error ?? "Could not unlock the studio.");
         setBusy(false);
         return;
       }

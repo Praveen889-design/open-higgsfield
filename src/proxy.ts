@@ -11,6 +11,15 @@ const UNLOCK_PATH = "/unlock";
    route answers the wrong thing — the actions enforce the lock themselves, in
    the place that can refuse in the caller's own language. */
 export async function proxy(request: NextRequest) {
+  /* A mutating request is passed through without answering it from here.
+     Returning any response object — NextResponse.next() included — makes this
+     the layer that owns the response's Set-Cookie, and the headers a server
+     action wrote downstream are dropped. That silently cost the unlock cookie:
+     the action ran, matched the code, set the cookie, returned ok, and the
+     browser received nothing. The platform key is written the same way and
+     would have gone the same way. */
+  if (request.method !== "GET") return;
+
   const { deviceId, minted } = resolveDeviceId(request.cookies.get(DEVICE_COOKIE)?.value);
   const response = await route(request);
   if (minted) response.cookies.set(DEVICE_COOKIE, deviceId, DEVICE_COOKIE_OPTIONS);
@@ -19,7 +28,6 @@ export async function proxy(request: NextRequest) {
 
 async function route(request: NextRequest): Promise<NextResponse> {
   const onUnlockPage = request.nextUrl.pathname === UNLOCK_PATH;
-  if (request.method !== "GET") return NextResponse.next();
 
   const unlocked = await isUnlocked(request.cookies.get(UNLOCK_COOKIE)?.value);
   if (unlocked) {
