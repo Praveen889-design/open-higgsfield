@@ -32,3 +32,37 @@ export function refusalText(refusal: ActionRefusal): string {
 export function refusalOf(caught: unknown): ActionRefusal | null {
   return caught instanceof ActionRefusedError ? caught.refusal : null;
 }
+
+/* What a platform refusal means, keyed on the status rather than the words.
+
+   The API's own guidance is not to read the human message for decisions — the
+   envelope is `{ detail }` free text that can be reworded whenever they like,
+   while the status is documented and stable. So the status picks the sentence
+   and the detail is repeated only where it carries the specifics: which
+   parameter, which field. Anything unmapped falls back to the platform's own
+   words rather than a shrug. */
+export function platformFailureText(status: number, detail?: string): string {
+  const said = detail?.trim();
+  const withDetail = (text: string) => (said ? `${text} The platform said: ${said}.` : text);
+
+  switch (status) {
+    case 400:
+      return withDetail("The platform rejected these settings, or too many runs are in flight.");
+    case 401:
+      return "The platform rejected your key. Check it in the sidebar — a new one may be needed.";
+    case 403:
+      return "Your platform account is out of credits. Add credits, then run it again.";
+    case 404:
+      return "This model is not available on your account.";
+    case 422:
+      return withDetail("The request was not valid for this model.");
+    case 423:
+      return "This model is temporarily blocked. Try it again later, or pick another.";
+    case 500:
+      return "The platform hit a server error. Give it a moment and try again.";
+    case 503:
+      return "This model is disabled or not ready yet. Pick another for now.";
+    default:
+      return said ? `The platform refused this run — ${said}.` : "The platform refused this run.";
+  }
+}

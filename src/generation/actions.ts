@@ -15,7 +15,7 @@ import {
 } from "./credentials";
 import { PlatformError, createPlatformClient } from "./platform";
 import type { QueuedGeneration, StatusResult } from "./platform";
-import { refusalText, type ActionRefusal } from "./refusal";
+import { platformFailureText, refusalText, type ActionRefusal } from "./refusal";
 import { toPlatform } from "./to-platform";
 
 /** Whether this deployment asks for a code at all — read by the unlock screen
@@ -98,7 +98,7 @@ export async function submitGeneration(plane: GenerationPlane): Promise<SubmitOu
        whole answer. Thrown, it reaches the browser as React error #441 and the
        visitor is told to try again, which is the one thing that cannot help. */
     if (caught instanceof PlatformError) {
-      return { ok: false, refusal: "platform", detail: caught.message };
+      return { ok: false, refusal: "platform", detail: platformFailureText(caught.status, caught.message) };
     }
     throw caught;
   }

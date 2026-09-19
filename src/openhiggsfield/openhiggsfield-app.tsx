@@ -155,9 +155,9 @@ function failureText(status: GenerationStatus): string {
    tests were dead, and someone with no key was told to try again. */
 function describeError(caught: unknown): string {
   const refusal = refusalOf(caught);
-  /* The platform's own wording, not ours: it names the account state the
-     visitor has to go and change. */
-  if (refusal === "platform") return `The platform refused this run — ${(caught as Error).message}.`;
+  /* Already a finished sentence, mapped from the status the platform returned:
+     shown as it stands, with nothing wrapped around it. */
+  if (refusal === "platform") return (caught as Error).message;
   if (refusal) return refusalText(refusal);
   const message = caught instanceof Error ? caught.message : String(caught);
   return `Generation failed — ${message}. Try again; if it repeats, check the key in the sidebar.`;
